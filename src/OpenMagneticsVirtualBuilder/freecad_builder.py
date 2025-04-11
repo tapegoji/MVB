@@ -138,7 +138,7 @@ class FreeCADBuilder:
 
             if include_core:
                 core_geometries = [part for part in geometrical_description 
-                                  if part['type'] == 'half set' or part['type'] == 'toroidal']
+                                  if part['type'] == 'half set' or part['type'] == 'toroidal' or part['type'] == 'spacer']
 
                 # We need a document to keep everything in the same place
                 close_file_after_finishing = False
