@@ -125,114 +125,115 @@ class FreeCADBuilder:
                  geometrical_description,
                  output_path=f'{os.path.dirname(os.path.abspath(__file__))}/../../output/',
                  save_files=True,
-                 export_files=True):
+                 export_files=True,
+                 include_core=True,
+                 include_spacer=False,
+                 include_winding=False,
+                 include_bobbin=True):
         import FreeCAD
         try:
             # Ensure output path
             os.makedirs(output_path, exist_ok=True)
-
-            # Detect or insert bobbin geometry
-            bobbin_part = next((part for part in geometrical_description
-                                if part['type'] == 'bobbin'), None)
-            core_part = next((part for part in geometrical_description
-                              if part['type'] == 'half set' or part['type'] == 'toroidal'), None)
-
-            if not bobbin_part and core_part:
-                # No bobbin was found; try to deduce from the first part's name
-                bobbin_name_aliases = core_part['shape']['aliases']
-                bobbin_name = None
-                for alias in bobbin_name_aliases:
-                    if alias.startswith("E"):
-                        bobbin_name = "Bobbin " + alias.replace(" ", "")  #TODO: This is only the case for E cores?
-                    else:
-                        bobbin_name = "Bobbin " + alias
-                if bobbin_name is not None:          
-                    bobbin_datanum = PyMKF.find_bobbin_by_name(bobbin_name)
-                    if bobbin_datanum is None or (isinstance(bobbin_datanum, dict) and any(isinstance(value, str) and 'Exception' in value for value in bobbin_datanum.values())):
-                        print(f"Bobbin not found in the database.")
-                    else:                    
-                        # Append bobbin geometry
-                        bobbin_geometrical_descriptin = {}
-                        bobbin_geometrical_descriptin['coordinates'] = bobbin_datanum['processedDescription']['coordinates']
-                        bobbin_geometrical_descriptin['dimensions'] = None
-                        bobbin_geometrical_descriptin['insulationMaterial'] = None
-                        bobbin_geometrical_descriptin['machining'] = None
-                        bobbin_geometrical_descriptin['material'] = 'plastic'
-                        bobbin_geometrical_descriptin['rotation'] = [0, 0, 0]
-                        bobbin_shape = {}
-                        # bobbin_shape['aliases'] = ['E 65/27', 'E65/27', 'EE 65/27', 'EE65/27', 'EE 65/32/27', 'EE65/32/27']
-                        bobbin_shape['dimensions'] = bobbin_datanum['functionalDescription']['dimensions']
-
-                        bobbin_shape['family'] = bobbin_datanum['functionalDescription']['family']
-                        bobbin_shape['familySubtype'] = None
-                        bobbin_shape['magneticCircuit'] = 'open'
-                        bobbin_shape['name'] = bobbin_datanum['name']
-                        bobbin_shape['type'] = 'standard'
-                        bobbin_shape['shape'] =  bobbin_datanum['functionalDescription']['shape']
-                        bobbin_geometrical_descriptin['shape'] = bobbin_shape
-                        bobbin_geometrical_descriptin['type'] = 'bobbin'                    
-                        geometrical_description.append(bobbin_geometrical_descriptin)
-
-            # Split out the geometry that is the "core" (spacers, half sets, toroidal)
-            core_geometry = []
-            bobbin_geometry = []
-            for part in geometrical_description:
-                if part['type'] in ['spacer', 'half set', 'toroidal']:
-                    core_geometry.append(part)
-                elif part['type'] == 'bobbin':
-                    bobbin_geometry.append(part)
-
-            # We need a document to keep everything in the same place
-            close_file_after_finishing = False
-            if FreeCAD.ActiveDocument is None:
-                close_file_after_finishing = True
-                FreeCAD.newDocument(project_name + "_magnetic")
-            document = FreeCAD.ActiveDocument
-
-            # 1) Build the core pieces using get_core, but do NOT export/save yet
-            core_outputs = None
-            if core_geometry:
-                core_outputs = self.get_core(
-                    project_name=project_name + "_magnetic_core",
-                    geometrical_description=core_geometry,
-                    output_path=output_path,
-                    save_files=False,
-                    export_files=False
-                )
-            else:
-                core_outputs = []
-
-            # 2) Build/Place each bobbin part in the same document
             pieces_to_export = []
-            if bobbin_geometry:
-                for index, geometrical_part in enumerate(bobbin_geometry):
-                    shape_data = geometrical_part['shape']
-                    part_builder = FreeCADBuilder().factory(shape_data)
-                    bobbin = part_builder.get_bobbin(data=copy.deepcopy(shape_data),
-                                                    name=f"Bobbin_{index}",
-                                                    save_files=False,
-                                                    export_files=False)
 
-                    m = bobbin.Placement.Matrix
-                    m.rotateX(geometrical_part['rotation'][2])
-                    m.rotateY(geometrical_part['rotation'][0])
-                    m.rotateZ(geometrical_part['rotation'][1])
-                    bobbin.Placement.Matrix = m
-                    document.recompute()
+            if include_core:
+                core_geometries = [part for part in geometrical_description 
+                                  if part['type'] == 'half set' or part['type'] == 'toroidal']
 
-                    bobbin.Placement.move(FreeCAD.Vector(
-                        geometrical_part['coordinates'][2] * 1000,
-                        geometrical_part['coordinates'][0] * 1000,
-                        geometrical_part['coordinates'][1] * 1000
-                    ))
-                    document.recompute()
-                    pieces_to_export.append(bobbin)
+                # We need a document to keep everything in the same place
+                close_file_after_finishing = False
+                if FreeCAD.ActiveDocument is None:
+                    close_file_after_finishing = True
+                    FreeCAD.newDocument(project_name + "_magnetic")
+                document = FreeCAD.ActiveDocument
 
-            # Combine the newly created bobbin shapes with the core pieces 
-            # (core_outputs will be either a list of shapes or (None, None) if something failed)
-            if isinstance(core_outputs, list):
-                pieces_to_export.extend(core_outputs)
+                # 1) Build the core pieces using get_core, but do NOT export/save yet
+                core_outputs = None
+                if core_geometries:
+                    core_outputs = self.get_core(
+                        project_name=project_name + "_magnetic_core",
+                        geometrical_description=core_geometries,
+                        output_path=output_path,
+                        save_files=False,
+                        export_files=False,
+                        include_spacer=include_spacer,
+                    )
+                else:
+                    core_outputs = []
+                # (core_outputs will be either a list of shapes or (None, None) if something failed)
+                if isinstance(core_outputs, list):
+                    pieces_to_export.extend(core_outputs)
+            
+            if include_bobbin:
+                # Detect or insert bobbin geometry
+                bobbin_geometies = [part for part in geometrical_description
+                                if part['type'] == 'bobbin']
+                
+                if not bobbin_geometies:  
+                    # No bobbin was found; try to deduce from the first part's name
+                    bobbin_name_aliases = core_geometries[0]['shape']['aliases']
+                    bobbin_name = None
+                    for alias in bobbin_name_aliases:
+                        if alias.startswith("E"):
+                            bobbin_name = "Bobbin " + alias.replace(" ", "")  #TODO: This is only the case for E cores?
+                        else:
+                            bobbin_name = "Bobbin " + alias
+                    if bobbin_name is not None:          
+                        bobbin_datanum = PyMKF.find_bobbin_by_name(bobbin_name)
+                        if bobbin_datanum is None or (isinstance(bobbin_datanum, dict) and any(isinstance(value, str) and 'Exception' in value for value in bobbin_datanum.values())):
+                            print(f"Bobbin not found in the database.")
+                        else:                    
+                            # Append bobbin geometry
+                            bobbin_geometrical_descriptin = {}
+                            bobbin_geometrical_descriptin['coordinates'] = bobbin_datanum['processedDescription']['coordinates']
+                            bobbin_geometrical_descriptin['dimensions'] = None
+                            bobbin_geometrical_descriptin['insulationMaterial'] = None
+                            bobbin_geometrical_descriptin['machining'] = None
+                            bobbin_geometrical_descriptin['material'] = 'plastic'
+                            bobbin_geometrical_descriptin['rotation'] = [0, 0, 0]
+                            bobbin_shape = {}
+                            # bobbin_shape['aliases'] = ['E 65/27', 'E65/27', 'EE 65/27', 'EE65/27', 'EE 65/32/27', 'EE65/32/27']
+                            bobbin_shape['dimensions'] = bobbin_datanum['functionalDescription']['dimensions']
 
+                            bobbin_shape['family'] = bobbin_datanum['functionalDescription']['family']
+                            bobbin_shape['familySubtype'] = None
+                            bobbin_shape['magneticCircuit'] = 'open'
+                            bobbin_shape['name'] = bobbin_datanum['name']
+                            bobbin_shape['type'] = 'standard'
+                            bobbin_shape['shape'] =  bobbin_datanum['functionalDescription']['shape']
+                            bobbin_geometrical_descriptin['shape'] = bobbin_shape
+                            bobbin_geometrical_descriptin['type'] = 'bobbin'                    
+  
+                            bobbin_geometies.append(bobbin_geometrical_descriptin)
+              
+                # 2) Build/Place each bobbin part in the same document
+                if bobbin_geometies:
+                    for index, geometrical_part in enumerate(bobbin_geometies):
+                        shape_data = geometrical_part['shape']
+                        part_builder = FreeCADBuilder().factory(shape_data)
+                        bobbin = part_builder.get_bobbin(data=copy.deepcopy(shape_data),
+                                                        name=f"Bobbin_{index}",
+                                                        save_files=False,
+                                                        export_files=False)
+
+                        m = bobbin.Placement.Matrix
+                        m.rotateX(geometrical_part['rotation'][2])
+                        m.rotateY(geometrical_part['rotation'][0])
+                        m.rotateZ(geometrical_part['rotation'][1])
+                        bobbin.Placement.Matrix = m
+                        document.recompute()
+
+                        bobbin.Placement.move(FreeCAD.Vector(
+                            geometrical_part['coordinates'][2] * 1000,
+                            geometrical_part['coordinates'][0] * 1000,
+                            geometrical_part['coordinates'][1] * 1000
+                        ))
+                        document.recompute()
+                        pieces_to_export.append(bobbin)
+
+            if include_winding:
+                raise NotImplementedError("Windings are not implemented yet.")
+            
             # Final labeling, exporting, saving if the user asked for it
             if export_files and pieces_to_export:
                 # Label them so you can differentiate after the export
@@ -304,7 +305,8 @@ class FreeCADBuilder:
                  geometrical_description, 
                  output_path=f'{os.path.dirname(os.path.abspath(__file__))}/../../output/', 
                  save_files=True, 
-                 export_files=True):
+                 export_files=True,
+                 include_spacer=True):
         import FreeCAD
         try:
             pieces_to_export = []
@@ -320,7 +322,7 @@ class FreeCADBuilder:
             document = FreeCAD.ActiveDocument
 
             for index, geometrical_part in enumerate(geometrical_description):
-                if geometrical_part['type'] == 'spacer':
+                if include_spacer and geometrical_part['type'] == 'spacer':
                     spacer = self.get_spacer(geometrical_part)
                     pieces_to_export.append(spacer)
                 elif geometrical_part['type'] in ['half set', 'toroidal']:
