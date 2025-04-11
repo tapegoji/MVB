@@ -135,17 +135,18 @@ class FreeCADBuilder:
             # Ensure output path
             os.makedirs(output_path, exist_ok=True)
             pieces_to_export = []
-
+            close_file_after_finishing = False
+            if FreeCAD.ActiveDocument is None:
+                close_file_after_finishing = True
+                FreeCAD.newDocument(project_name + "_magnetic")
+            document = FreeCAD.ActiveDocument
+            
             if include_core:
                 core_geometries = [part for part in geometrical_description 
                                   if part['type'] == 'half set' or part['type'] == 'toroidal' or part['type'] == 'spacer']
 
                 # We need a document to keep everything in the same place
-                close_file_after_finishing = False
-                if FreeCAD.ActiveDocument is None:
-                    close_file_after_finishing = True
-                    FreeCAD.newDocument(project_name + "_magnetic")
-                document = FreeCAD.ActiveDocument
+
 
                 # 1) Build the core pieces using get_core, but do NOT export/save yet
                 core_outputs = None
