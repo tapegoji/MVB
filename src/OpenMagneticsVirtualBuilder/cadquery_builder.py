@@ -1210,6 +1210,22 @@ class CadQueryBuilder:
                     # Apply translation
                     piece = piece.translate(convert_axis(geometrical_part['coordinates']))
 
+                    # Separate half-set pieces by the largest gap in the assembly.
+                    # Both halves shift by half the total gap, regardless of which
+                    # one has the machining. Internal unit = meters (same as MAS).
+                    if geometrical_part['type'] in ['half set']:
+                        # Find max gap from ALL pieces in the assembly
+                        max_gap = 5e-6  # residual default
+                        for gp in geometrical_description:
+                            if gp.get('machining'):
+                                for m in gp['machining']:
+                                    max_gap = max(max_gap, m.get('length', 0))
+                        shift = max_gap / 2
+                        if geometrical_part['rotation'][0] > 0:
+                            piece = piece.translate((0, shift, 0))
+                        else:
+                            piece = piece.translate((0, -shift, 0))
+
                     core_pieces.append(piece)
 
         # Build coil turns
