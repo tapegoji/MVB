@@ -1194,6 +1194,14 @@ class CadQueryBuilder:
                         export_files=False
                     )
 
+                    # Apply machining (subtractive gaps) before rotation
+                    if 'machining' in geometrical_part and geometrical_part['machining'] is not None:
+                        for machining in geometrical_part['machining']:
+                            piece = part_builder.apply_machining(
+                                piece=piece,
+                                machining=machining,
+                                dimensions=flatten_dimensions(shape_data))
+
                     # rotation[0] around X, rotation[1] around Y, rotation[2] around Z
                     piece = piece.rotate((1, 0, 0), (-1, 0, 0), geometrical_part['rotation'][0] / math.pi * 180)
                     piece = piece.rotate((0, 1, 0), (0, -1, 0), geometrical_part['rotation'][1] / math.pi * 180)
