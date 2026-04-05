@@ -159,9 +159,9 @@ class FreeCADBuilder:
             document = FreeCAD.ActiveDocument
 
             for index, geometrical_part in enumerate(geometrical_description):
+                # Skip spacers - they are built separately via get_spacers()
                 if geometrical_part['type'] == 'spacer':
-                    spacer = self.get_spacer(geometrical_part)
-                    pieces_to_export.append(spacer)
+                    continue
                 elif geometrical_part['type'] in ['half set', 'toroidal']:
                     shape_data = geometrical_part['shape']
                     part_builder = FreeCADBuilder().factory(shape_data)
@@ -226,6 +226,71 @@ class FreeCADBuilder:
             with contextlib.suppress(NameError):
                 document = FreeCAD.ActiveDocument
                 document.saveAs(f"{output_path}/error.FCStd")
+                FreeCAD.closeDocument(project_name)
+            return None, None
+
+    def get_spacers(self, project_name, geometrical_description, output_path=f'{os.path.dirname(os.path.abspath(__file__))}/../../output/', save_files=True, export_files=True):
+        """Build only the spacers from the geometrical description.
+        
+        Spacers are built separately so they can be rendered with a different color.
+        
+        Args:
+            project_name: Name for the output files
+            geometrical_description: Core geometrical description from MKF
+            output_path: Directory for output files
+            save_files: Whether to save files
+            export_files: Whether to export files
+            
+        Returns:
+            Tuple of (step_path, stl_path) or list of spacer objects if export_files is False
+        """
+        try:
+            import FreeCAD
+            spacers_to_export = []
+            project_name = f"{project_name}_spacers".replace(" ", "_").replace("-", "_").replace("/", "_").replace(".", "__")
+
+            os.makedirs(output_path, exist_ok=True)
+
+            close_file_after_finishing = False
+            if FreeCAD.ActiveDocument is None:
+                close_file_after_finishing = True
+                FreeCAD.newDocument(project_name)
+
+            for geometrical_part in geometrical_description:
+                if geometrical_part['type'] == 'spacer':
+                    spacer = self.get_spacer(geometrical_part)
+                    spacers_to_export.append(spacer)
+
+            if len(spacers_to_export) == 0:
+                if close_file_after_finishing:
+                    FreeCAD.closeDocument(project_name)
+                return None, None
+
+            if export_files:
+                for index, spacer in enumerate(spacers_to_export):
+                    spacer.Label = f"spacer_{index}"
+
+                import Import
+                import Mesh
+                Import.export(spacers_to_export, f"{output_path}{os.path.sep}{project_name}.step")
+                Mesh.export(spacers_to_export, f"{output_path}{os.path.sep}{project_name}.stl")
+
+            if save_files:
+                document = FreeCAD.ActiveDocument
+                document.saveAs(f"{output_path}{os.path.sep}{project_name}.FCStd")
+
+            if close_file_after_finishing:
+                FreeCAD.closeDocument(project_name)
+
+            if export_files:
+                return f"{output_path}{os.path.sep}{project_name}.step", f"{output_path}{os.path.sep}{project_name}.stl"
+            else:
+                return spacers_to_export
+
+        except:  # noqa: E722
+            with contextlib.suppress(NameError):
+                document = FreeCAD.ActiveDocument
+                document.saveAs(f"{output_path}/error_spacers.FCStd")
                 FreeCAD.closeDocument(project_name)
             return None, None
 

@@ -67,9 +67,9 @@ class Builder:
             output_path = f'{os.path.dirname(os.path.abspath(__file__))}/../../output/'
         return self.engine.get_core_gapping_technical_drawing(project_name, core_data, colors, output_path, save_files, export_files)
 
-    def get_magnetic(self, magnetic_data, project_name="Magnetic", output_path=None, export_files=True):
+    def get_magnetic(self, magnetic_data, project_name="Magnetic", output_path=None, export_files=True, include_bobbin=True):
         """Create a complete 3D magnetic component from MAS data.
-        
+
         Parameters
         ----------
         magnetic_data : dict
@@ -81,7 +81,9 @@ class Builder:
             Path to save output files.
         export_files : bool
             If True, export STEP and STL files.
-            
+        include_bobbin : bool
+            If False, skip bobbin geometry (useful for FEM where bobbin = air).
+
         Returns
         -------
         Tuple of (step_path, stl_path) or list of pieces if export_files is False.
@@ -91,7 +93,7 @@ class Builder:
         # Handle both full MAS format and just magnetic data
         if 'magnetic' in magnetic_data:
             magnetic_data = magnetic_data['magnetic']
-        return self.engine.get_magnetic(magnetic_data, project_name, output_path, export_files)
+        return self.engine.get_magnetic(magnetic_data, project_name, output_path, export_files, include_bobbin)
 
 
 if __name__ == '__main__':  # pragma: no cover
