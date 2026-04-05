@@ -261,8 +261,32 @@ class CadQueryBuilder:
     # Number of segments for round wire polygon approximation.
     # Polygonal profiles produce flat-faced pipe sweeps that OCC can
     # fragment cleanly, enabling gmsh meshing of many-turn coils.
-    # 16 segments ≈ 2% area error vs perfect circle.
-    WIRE_POLYGON_SEGMENTS = 16
+    # 8 segments ≈ 10% area error vs perfect circle, but produces larger
+    # polygon faces (side ≈ 0.383*d) which gmsh can mesh without invalid elements.
+    # 16 segments gave 0.087mm sides for 0.447mm Litz conducting diameter, causing
+    # "elements remain invalid in surface" and 3D mesh failure.
+    WIRE_POLYGON_SEGMENTS = 8
+    CORE_POLYGON_SEGMENTS = 16  # Polygon approximation for round core features (center post, winding window)
+
+    @staticmethod
+    def polygon_cylinder(height, radius, n_segments, workplane="XY"):
+        """Create a polygon-approximated cylinder (prism) instead of a NURBS cylinder.
+
+        Eliminates curved core surfaces that cause meshing conflicts with polygon wire
+        cross-sections near the air gap. All surfaces become flat facets.
+        """
+        import cadquery as cq
+        pts = []
+        for i in range(n_segments):
+            angle = 2 * math.pi * i / n_segments
+            pts.append((radius * math.cos(angle), radius * math.sin(angle)))
+        pts.append(pts[0])  # close the polygon
+        return (
+            cq.Workplane(workplane)
+            .polyline(pts)
+            .close()
+            .extrude(height / 2, both=True)
+        )
 
     def __init__(self):
         self.shapers = {
@@ -499,7 +523,7 @@ class CadQueryBuilder:
                 wire_height = (wire_description.outer_height or wire_description.conducting_height or 0.001) * SCALE
             wire_radius = min(wire_width, wire_height) / 2.0  # used for corner sizing
         else:  # round, litz
-            wire_diameter = (wire_description.outer_diameter or wire_description.conducting_diameter or 0.001) * SCALE
+            wire_diameter = (wire_description.conducting_diameter or wire_description.outer_diameter or 0.001) * SCALE
             wire_radius = wire_diameter / 2.0
             wire_width = wire_diameter  # for consistent API
             wire_height = wire_diameter
@@ -526,70 +550,42 @@ class CadQueryBuilder:
             # Round column: circular turn path
             turn_radius = radial_pos  # Distance from center to wire center
             
+            # Build polygon path around column axis (Y) in XZ plane.
+            # Polygon path eliminates NURBS curves → all-flat-facet geometry
+            # that gmsh can mesh without curved-surface issues at the gap.
+            # Use cadquery sweep (not raw OCC MakePipe which fails at polygon corners).
+            TURN_PATH_SEGMENTS = CadQueryBuilder.CORE_POLYGON_SEGMENTS
+            # Half-segment offset prevents path faces from aligning with air box
+            # faces (axis-aligned planes), which causes zero-volume degenerate tets.
+            path_offset = math.pi / TURN_PATH_SEGMENTS
+            path_pts = []
+            for seg in range(TURN_PATH_SEGMENTS):
+                angle = 2 * math.pi * seg / TURN_PATH_SEGMENTS + path_offset
+                path_pts.append((turn_radius * math.cos(angle),
+                                 turn_radius * math.sin(angle)))
+            path = (cq.Workplane("XZ")
+                    .polyline(path_pts).close()
+                    .translate((0, height_pos, 0)))
+
             if is_rectangular_wire:
-                # For rectangular wire: sweep a rectangular cross-section around the circular path
-                # Create rectangular cross-section at the wire center position, then sweep
-                from OCP.BRepOffsetAPI import BRepOffsetAPI_MakePipe
-                from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeFace
-                from OCP.GC import GC_MakeCircle
-                
-                # Circular spine around column axis (Y)
-                spine_center = gp_Pnt(0, height_pos, 0)
-                spine_axis = gp_Ax2(spine_center, gp_Dir(0, 1, 0), gp_Dir(1, 0, 0))
-                spine_circle = GC_MakeCircle(spine_axis, turn_radius).Value()
-                spine_edge = BRepBuilderAPI_MakeEdge(spine_circle).Edge()
-                spine_wire = BRepBuilderAPI_MakeWire(spine_edge).Wire()
-
-                # Rectangular profile at (turn_radius, height_pos, 0), perpendicular to tangent
-                # Tangent at start is along -Z (circle starts at +X, tangent is -Z)
-                # Profile plane is perpendicular to tangent → in XY plane? No, perp to -Z is XY.
-                # Actually for a circle around Y at +X start, tangent is along +Z.
-                # Profile plane perpendicular to +Z at (turn_radius, height_pos, 0):
-                from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon
-                px = turn_radius
-                py = height_pos
-                half_wh = wire_height / 2
                 half_ww = wire_width / 2
-                rect_wire = BRepBuilderAPI_MakePolygon(
-                    gp_Pnt(px - half_ww, py - half_wh, 0),
-                    gp_Pnt(px + half_ww, py - half_wh, 0),
-                    gp_Pnt(px + half_ww, py + half_wh, 0),
-                    gp_Pnt(px - half_ww, py + half_wh, 0),
-                    True
-                ).Wire()
-                profile_face = BRepBuilderAPI_MakeFace(rect_wire).Face()
-                
-                # Sweep the rectangle along the spine
-                pipe = BRepOffsetAPI_MakePipe(spine_wire, profile_face).Shape()
-                turn = cq.Workplane("XY").add(cq.Shape(pipe))
+                half_wh = wire_height / 2
+                profile = (cq.Workplane("XY")
+                           .moveTo(turn_radius - half_ww, height_pos - half_wh)
+                           .rect(wire_width, wire_height))
+                turn = profile.sweep(path)
             else:
-                # For round wire on round column: use polygonal cross-section
-                # for wires >= 0.3mm (enables gmsh meshing of many turns).
-                # For thinner wires, use exact torus (more robust for small geometry).
                 if wire_diameter >= 0.3:
-                    from OCP.GC import GC_MakeCircle
-                    spine_center = gp_Pnt(0, height_pos, 0)
-                    spine_axis = gp_Ax2(spine_center, gp_Dir(0, 1, 0), gp_Dir(1, 0, 0))
-                    spine_circle = GC_MakeCircle(spine_axis, turn_radius).Value()
-                    spine_edge = BRepBuilderAPI_MakeEdge(spine_circle).Edge()
-                    spine_wire = BRepBuilderAPI_MakeWire(spine_edge).Wire()
-
-                    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakePolygon as MkPoly
-                    poly = MkPoly()
-                    px = turn_radius
-                    py = height_pos
+                    prof_pts = []
                     offset = math.pi / WIRE_POLYGON_SEGMENTS
                     for seg in range(WIRE_POLYGON_SEGMENTS):
                         angle = 2 * math.pi * seg / WIRE_POLYGON_SEGMENTS + offset
-                        poly.Add(gp_Pnt(px + wire_radius * math.cos(angle),
-                                        py + wire_radius * math.sin(angle), 0))
-                    poly.Close()
-                    profile_face = BRepBuilderAPI_MakeFace(poly.Wire()).Face()
-
-                    pipe = BRepOffsetAPI_MakePipe(spine_wire, profile_face).Shape()
-                    turn = cq.Workplane("XY").add(cq.Shape(pipe))
+                        prof_pts.append((turn_radius + wire_radius * math.cos(angle),
+                                         height_pos + wire_radius * math.sin(angle)))
+                    profile = cq.Workplane("XY").polyline(prof_pts).close()
+                    turn = profile.sweep(path)
                 else:
-                    # Exact torus for thin wires
+                    # Exact torus for thin wires (< 0.3mm)
                     torus_center = gp_Pnt(0, height_pos, 0)
                     torus_axis = gp_Ax2(torus_center, gp_Dir(0, 1, 0), gp_Dir(1, 0, 0))
                     torus = BRepPrimAPI_MakeTorus(torus_axis, turn_radius, wire_radius).Shape()
@@ -866,26 +862,13 @@ class CadQueryBuilder:
         total_depth = ww_width + col_depth
         
         if bobbin_description.column_shape == ColumnShape.round:
-            # Round column bobbin (cylindrical)
-            # Cylinder axis along Y (height/column axis) using XZ workplane
-            bobbin = (
-                cq.Workplane("XZ")
-                .cylinder(total_height, total_width)
-            )
-            neg_ww = (
-                cq.Workplane("XZ")
-                .cylinder(ww_height, total_width)
-            )
-            # Column outer = col_width (already includes thickness)
-            central_col = (
-                cq.Workplane("XZ")
-                .cylinder(ww_height, col_width)
-            )
-            # Inner hole = core column = col_width - thickness
-            central_hole = (
-                cq.Workplane("XZ")
-                .cylinder(total_height, col_width - col_thickness)
-            )
+            # Round column bobbin (polygon-approximated cylinders for mesh compatibility)
+            n_seg = CadQueryBuilder.CORE_POLYGON_SEGMENTS
+            bobbin = CadQueryBuilder.polygon_cylinder(total_height, total_width, n_seg, "XZ")
+            neg_ww = CadQueryBuilder.polygon_cylinder(ww_height, total_width, n_seg, "XZ")
+            central_col = CadQueryBuilder.polygon_cylinder(ww_height, col_width, n_seg, "XZ")
+            central_hole = CadQueryBuilder.polygon_cylinder(
+                total_height, col_width - col_thickness, n_seg, "XZ")
 
             # Subtract operations
             neg_ww_cut = neg_ww.cut(central_col)
@@ -975,7 +958,7 @@ class CadQueryBuilder:
                 wire_height = (wire_description.outer_height or wire_description.conducting_height or 0.001) * SCALE
             wire_radius = min(wire_width, wire_height) / 2.0
         else:
-            wire_diameter = (wire_description.outer_diameter or wire_description.conducting_diameter or 0.001) * SCALE
+            wire_diameter = (wire_description.conducting_diameter or wire_description.outer_diameter or 0.001) * SCALE
             wire_radius = wire_diameter / 2.0
             wire_width = wire_diameter
             wire_height = wire_diameter
@@ -1274,17 +1257,18 @@ class CadQueryBuilder:
             turn_geom = self.get_turn(turn_desc, wire_desc, bobbin_processed, is_toroidal=is_toroidal)
             turn_pieces.append(turn_geom)
 
-        # Subtract turns from bobbin to avoid overlapping volumes.
-        if bobbin_geom is not None and turn_pieces:
+        # Subtract core and turns from bobbin to avoid overlapping volumes.
+        if bobbin_geom is not None:
+            for core_piece in core_pieces:
+                try:
+                    bobbin_geom = bobbin_geom.cut(core_piece)
+                except Exception:
+                    pass
             for turn in turn_pieces:
                 try:
                     bobbin_geom = bobbin_geom.cut(turn)
                 except Exception:
                     pass
-
-        # Note: toroidal turns pass through the core hole without intersecting
-        # the core body. No core subtraction needed — gmsh fragmentation with
-        # increased tolerance handles the near-touching surfaces.
 
         # Assemble all pieces
         all_pieces = core_pieces[:]
@@ -2060,18 +2044,18 @@ class CadQueryBuilder:
             return {1: ["A", "B", "C", "D", "E", "F", "G"]}
 
         def get_negative_winding_window(self, dimensions):
+            n_seg = CadQueryBuilder.CORE_POLYGON_SEGMENTS
+            z_offset = dimensions["D"] / 2 + (dimensions["B"] - dimensions["D"])
             winding_window_cylinder = (
-                cq.Workplane()
-                .cylinder(dimensions['D'], dimensions['E'] / 2)
+                CadQueryBuilder.polygon_cylinder(dimensions['D'], dimensions['E'] / 2, n_seg)
                 .tag("winding_window_cylinder")
-                .translate((0, 0, dimensions["D"] / 2 + (dimensions["B"] - dimensions["D"])))
+                .translate((0, 0, z_offset))
             )
 
             central_column_cylinder = (
-                cq.Workplane()
-                .cylinder(dimensions['D'], dimensions['F'] / 2)
+                CadQueryBuilder.polygon_cylinder(dimensions['D'], dimensions['F'] / 2, n_seg)
                 .tag("central_column_cylinder")
-                .translate((0, 0, dimensions["D"] / 2 + (dimensions["B"] - dimensions["D"])))
+                .translate((0, 0, z_offset))
             )
             winding_window = winding_window_cylinder - central_column_cylinder
             cuts = []
@@ -2106,41 +2090,43 @@ class CadQueryBuilder:
 
         def apply_machining(self, piece, machining, dimensions):
             """Apply machining (gap) to the core piece.
-            
+
             For round-center cores (ER, ETD), use a cylinder for central column machining.
+            The piece's column axis is along Y (after get_piece's -90° X rotation),
+            so all tools must be oriented along Y, not Z.
             """
             height = machining['length']
-            z_coord = machining['coordinates'][1]
-            
+            y_coord = machining['coordinates'][1]
+
             if machining['coordinates'][0] == 0:
-                # Central column machining - use cylinder for round column
+                # Central column machining - polygon cylinder along Y axis
                 radius = dimensions["F"] / 2
+                n_seg = CadQueryBuilder.CORE_POLYGON_SEGMENTS
                 tool = (
-                    cq.Workplane()
-                    .cylinder(height, radius)
-                    .translate((0, 0, z_coord))
+                    CadQueryBuilder.polygon_cylinder(height, radius, n_seg, workplane="XZ")
+                    .translate((0, y_coord, 0))
                 )
                 return piece - tool
             else:
-                # Side column machining - use rectangular tool
+                # Side column machining - rectangular tool along Y axis
                 width = dimensions["A"] / 2
                 length = dimensions["C"]
                 x_coord = -dimensions["A"] / 2 if machining['coordinates'][0] < 0 else dimensions["A"] / 2
-                
+
                 tool = (
                     cq.Workplane()
-                    .box(width, length, height)
-                    .translate((x_coord, 0, z_coord))
+                    .box(width, height, length)
+                    .translate((x_coord, y_coord, 0))
                 )
-                
-                # Subtract central column area (use cylinder since center is round)
+
+                # Subtract central column area (polygon cylinder along Y)
                 central_radius = (dimensions["F"] / 2) * 1.001
+                n_seg = CadQueryBuilder.CORE_POLYGON_SEGMENTS
                 central_tool = (
-                    cq.Workplane()
-                    .cylinder(height, central_radius)
-                    .translate((0, 0, z_coord))
+                    CadQueryBuilder.polygon_cylinder(height, central_radius, n_seg, workplane="XZ")
+                    .translate((0, y_coord, 0))
                 )
-                
+
                 tool = tool - central_tool
                 return piece - tool
 
