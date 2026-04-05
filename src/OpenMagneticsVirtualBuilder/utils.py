@@ -22,32 +22,53 @@ class Meta(enum.EnumMeta):
 
 
 class ShapeFamily(enum.Enum, metaclass=Meta):
-    """Enumeration of all supported magnetic core shape families.
-
-    Each member corresponds to a core geometry following EN 60205 naming.
     """
+    Core shape families as defined in MAS magnetic/core/shape.json#/$defs/coreShapeFamily.
+    Values are MAS string values (lowercase with spaces for planar types).
+    """
+    C = "c"
+    DRUM = "drum"
+    E = "e"
+    EC = "ec"
+    EFD = "efd"
+    EI = "ei"
+    EL = "el"
+    ELP = "elp"
+    EP = "ep"
+    EPX = "epx"
+    EQ = "eq"
+    ER = "er"
+    ETD = "etd"
+    H = "h"
+    LP = "lp"
+    P = "p"
+    PLANAR_E = "planar e"
+    PLANAR_EL = "planar el"
+    PLANAR_ER = "planar er"
+    PM = "pm"
+    PQ = "pq"
+    PQI = "pqi"
+    RM = "rm"
+    ROD = "rod"
+    T = "t"
+    U = "u"
+    UI = "ui"
+    UR = "ur"
+    UT = "ut"
 
-    ETD = enum.auto()
-    ER = enum.auto()
-    EP = enum.auto()
-    EPX = enum.auto()
-    PQ = enum.auto()
-    E = enum.auto()
-    PM = enum.auto()
-    P = enum.auto()
-    RM = enum.auto()
-    PLANAR_ER = enum.auto()
-    EFD = enum.auto()
-    U = enum.auto()
-    EQ = enum.auto()
-    PLANAR_E = enum.auto()
-    PLANAR_EL = enum.auto()
-    EC = enum.auto()
-    UR = enum.auto()
-    UT = enum.auto()
-    LP = enum.auto()
-    T = enum.auto()
-    C = enum.auto()
+
+class GapType(enum.Enum, metaclass=Meta):
+    """Gap types as defined in MAS magnetic/core/gap.json#/$defs/gapType."""
+    ADDITIVE = "additive"
+    SUBTRACTIVE = "subtractive"
+    RESIDUAL = "residual"
+
+
+class TurnCrossSectionalShape(enum.Enum, metaclass=Meta):
+    """Turn cross-sectional shapes as defined in MAS magnetic/coil.json#/$defs/turnCrossSectionalShape."""
+    ROUND = "round"
+    RECTANGULAR = "rectangular"
+    OVAL = "oval"
 
 
 def flatten_dimensions(data, scale_factor=1.0):

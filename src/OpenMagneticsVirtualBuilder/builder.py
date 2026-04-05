@@ -173,7 +173,7 @@ class Builder:
             output_path = f"{os.path.dirname(os.path.abspath(__file__))}/../../output/"
         return self.engine.get_winding(winding_data, bobbin_dims, name, output_path, save_files, export_files)
 
-    def get_magnetic(self, magnetic_data, project_name="Magnetic", output_path=None, export_files=True):
+    def get_magnetic(self, magnetic_data, project_name="Magnetic", output_path=None, export_files=True, include_bobbin=True):
         """Create a complete 3D magnetic component from MAS data.
 
         Parameters
@@ -187,6 +187,8 @@ class Builder:
             Path to save output files.
         export_files : bool
             If True, export STEP and STL files.
+        include_bobbin : bool
+            If False, skip bobbin geometry (useful for FEM where bobbin = air).
 
         Returns
         -------
@@ -195,9 +197,9 @@ class Builder:
         if output_path is None:
             output_path = f"{os.path.dirname(os.path.abspath(__file__))}/../../output/"
         # Handle both full MAS format and just magnetic data
-        if "magnetic" in magnetic_data:
-            magnetic_data = magnetic_data["magnetic"]
-        return self.engine.get_magnetic(magnetic_data, project_name, output_path, export_files)
+        if 'magnetic' in magnetic_data:
+            magnetic_data = magnetic_data['magnetic']
+        return self.engine.get_magnetic(magnetic_data, project_name, output_path, export_files, include_bobbin)
 
     def get_svg_drawings(self, project_name, geometrical_description, **kwargs):
         """Generate annotated SVG drawings for a core shape."""
